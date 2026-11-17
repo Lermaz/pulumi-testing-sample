@@ -3,24 +3,31 @@
     "version": "1.0.0",
     "main": "index.ts",
     "scripts": {
-        "test": "jest",
         "typecheck": "tsc --noEmit",
         "preview": "pulumi preview",
-        "up": "pulumi up"
+        "up": "pulumi up",
+        "db:generate": "drizzle-kit generate --config lambdas/drizzle.config.ts",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "test:cov": "vitest run --coverage",
+        "test:debug": "vitest --inspect-brk --no-file-parallelism"
     },
     "devDependencies": {
         "@aws-sdk/client-secrets-manager": "^3.1171.0",
+        "@electric-sql/pglite": "^0.5.16",
         "@types/aws-lambda": "^8.10.164",
         "@types/jest": "^30.0.0",
         "@types/node": "^26.6.6",
         "@types/pg": "^8.23.1",
+        "@vitest/coverage-v8": "^5.1.0",
         "drizzle-kit": "^0.31.11",
         "esbuild": "^0.28.2",
         "jest": "^30.5.2",
         "pg": "^8.23.1",
         "ts-jest": "^29.4.15",
         "ts-node": "^10.9.2",
-        "typescript": "^7.0.2"
+        "typescript": "^7.0.2",
+        "vitest": "^5.1.0"
     },
     "dependencies": {
         "@pulumi/aws": "^7.0.0",
