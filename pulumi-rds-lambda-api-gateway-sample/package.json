@@ -1,6 +1,13 @@
 {
     "name": "pulumi-rds-lambda-api-gateway-sample",
+    "version": "1.0.0",
     "main": "index.ts",
+    "scripts": {
+        "test": "jest",
+        "typecheck": "tsc --noEmit",
+        "preview": "pulumi preview",
+        "up": "pulumi up"
+    },
     "devDependencies": {
         "@aws-sdk/client-secrets-manager": "^3.1171.0",
         "@types/aws-lambda": "^8.10.164",
