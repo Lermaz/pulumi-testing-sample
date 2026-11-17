@@ -1,20 +1,15 @@
-import { Pool, QueryResult, QueryResultRow } from "pg";
+import * as path from "path";
+import { Pool } from "pg";
+import { drizzle, NodePgDatabase } from "drizzle-orm/node-postgres";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
+import * as schema from "./schema";
+
+export type Db = NodePgDatabase<typeof schema>;
 
 const secrets = new SecretsManagerClient({});
-let poolPromise: Promise<Pool> | undefined;
-
-// NOTE: fine for getting started. Move to real migrations (e.g. node-pg-migrate) before prod.
-const SCHEMA = `
-  CREATE TABLE IF NOT EXISTS products (
-    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    name        text NOT NULL,
-    description text,
-    price_cents integer NOT NULL CHECK (price_cents >= 0),
-    stock       integer NOT NULL DEFAULT 0 CHECK (stock >= 0),
-    created_at  timestamptz NOT NULL DEFAULT now(),
-    updated_at  timestamptz NOT NULL DEFAULT now()
-  )`;
+const MIGRATION_LOCK_ID = 727274; // arbitrary constant: serializes concurrent cold starts
+let dbPromise: Promise<Db> | undefined;
 
 function env(name: string): string {
     const v = process.env[name];
@@ -22,7 +17,7 @@ function env(name: string): string {
     return v;
 }
 
-async function createPool(): Promise<Pool> {
+async function createDb(): Promise<Db> {
     const res = await secrets.send(new GetSecretValueCommand({ SecretId: env("DB_SECRET_ARN") }));
     const { username, password } = JSON.parse(res.SecretString ?? "{}");
     const pool = new Pool({
@@ -36,25 +31,37 @@ async function createPool(): Promise<Pool> {
         // Encrypted but not CA-verified. TODO: bundle the RDS CA and set rejectUnauthorized: true.
         ssl: { rejectUnauthorized: false },
     });
-    await pool.query(SCHEMA);
-    return pool;
+
+    // Apply pending migrations (bundled next to index.js by lib/bundle.ts) under an advisory lock.
+    const client = await pool.connect();
+    try {
+        await client.query("SELECT pg_advisory_lock($1)", [MIGRATION_LOCK_ID]);
+        await migrate(drizzle(client), { migrationsFolder: path.join(__dirname, "drizzle") });
+    } finally {
+        await client.query("SELECT pg_advisory_unlock($1)", [MIGRATION_LOCK_ID]).catch(() => undefined);
+        client.release();
+    }
+
+    return drizzle(pool, { schema });
 }
 
-function getPool(): Promise<Pool> {
-    poolPromise ??= createPool().catch(err => {
-        poolPromise = undefined; // don't cache a failed init
+function getDb(): Promise<Db> {
+    dbPromise ??= createDb().catch(err => {
+        dbPromise = undefined; // don't cache a failed init
         throw err;
     });
-    return poolPromise;
+    return dbPromise;
 }
 
-/** Runs a query; if RDS rotated the password (28P01), refetch the secret and retry once. */
-export async function query<T extends QueryResultRow>(text: string, params: unknown[] = []): Promise<QueryResult<T>> {
+const isBadPassword = (err: any) => (err?.code ?? err?.cause?.code) === "28P01"; // Drizzle wraps pg errors in .cause
+
+/** Runs `fn` with the Drizzle client; if RDS rotated the password, refetch the secret and retry once. */
+export async function withDb<T>(fn: (db: Db) => Promise<T>): Promise<T> {
     try {
-        return await (await getPool()).query<T>(text, params);
-    } catch (err: any) {
-        if (err?.code !== "28P01") throw err;
-        poolPromise = undefined;
-        return (await getPool()).query<T>(text, params);
+        return await fn(await getDb());
+    } catch (err) {
+        if (!isBadPassword(err)) throw err;
+        dbPromise = undefined;
+        return fn(await getDb());
     }
 }

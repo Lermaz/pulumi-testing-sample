@@ -1,5 +1,7 @@
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from "aws-lambda";
-import { query } from "./db";
+import { desc, eq } from "drizzle-orm";
+import { withDb } from "./db";
+import { Product, products } from "./schema";
 
 type Handler = (event: APIGatewayProxyEventV2) => Promise<APIGatewayProxyResultV2>;
 
@@ -8,7 +10,17 @@ class HttpError extends Error {
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const COLUMNS = "id, name, description, price_cents, stock, created_at, updated_at";
+
+// Drizzle uses camelCase; the public API keeps snake_case.
+const toApi = (p: Product) => ({
+    id: p.id,
+    name: p.name,
+    description: p.description,
+    price_cents: p.priceCents,
+    stock: p.stock,
+    created_at: p.createdAt,
+    updated_at: p.updatedAt,
+});
 
 const json = (statusCode: number, body?: unknown): APIGatewayProxyResultV2 => ({
     statusCode,
@@ -40,41 +52,40 @@ function parseProduct(event: APIGatewayProxyEventV2) {
     if (!Number.isInteger(price_cents) || price_cents < 0) throw new HttpError(400, "price_cents must be an integer >= 0");
     if (!Number.isInteger(stock) || stock < 0) throw new HttpError(400, "stock must be an integer >= 0");
     if (description !== null && typeof description !== "string") throw new HttpError(400, "description must be a string");
-    return { name: name.trim(), description, price_cents, stock };
+    return { name: name.trim(), description, priceCents: price_cents as number, stock: stock as number };
 }
 
 export const create = wrap(async (event) => {
-    const p = parseProduct(event);
-    const { rows } = await query(
-        `INSERT INTO products (name, description, price_cents, stock) VALUES ($1, $2, $3, $4) RETURNING ${COLUMNS}`,
-        [p.name, p.description, p.price_cents, p.stock]);
-    return json(201, rows[0]);
+    const values = parseProduct(event);
+    const [row] = await withDb(db => db.insert(products).values(values).returning());
+    return json(201, toApi(row));
 });
 
 export const list = wrap(async (event) => {
     const limit = Math.min(Number(event.queryStringParameters?.limit ?? 50) || 50, 100);
     const offset = Math.max(Number(event.queryStringParameters?.offset ?? 0) || 0, 0);
-    const { rows } = await query(
-        `SELECT ${COLUMNS} FROM products ORDER BY created_at DESC, id LIMIT $1 OFFSET $2`, [limit, offset]);
-    return json(200, { items: rows, limit, offset });
+    const rows = await withDb(db =>
+        db.select().from(products).orderBy(desc(products.createdAt), products.id).limit(limit).offset(offset));
+    return json(200, { items: rows.map(toApi), limit, offset });
 });
 
 export const get = wrap(async (event) => {
-    const { rows } = await query(`SELECT ${COLUMNS} FROM products WHERE id = $1`, [productId(event)]);
-    return rows[0] ? json(200, rows[0]) : json(404, { error: "Product not found" });
+    const id = productId(event);
+    const [row] = await withDb(db => db.select().from(products).where(eq(products.id, id)));
+    return row ? json(200, toApi(row)) : json(404, { error: "Product not found" });
 });
 
 export const update = wrap(async (event) => {
     const id = productId(event);
-    const p = parseProduct(event);
-    const { rows } = await query(
-        `UPDATE products SET name = $2, description = $3, price_cents = $4, stock = $5, updated_at = now()
-         WHERE id = $1 RETURNING ${COLUMNS}`,
-        [id, p.name, p.description, p.price_cents, p.stock]);
-    return rows[0] ? json(200, rows[0]) : json(404, { error: "Product not found" });
+    const values = parseProduct(event);
+    const [row] = await withDb(db =>
+        db.update(products).set({ ...values, updatedAt: new Date() }).where(eq(products.id, id)).returning());
+    return row ? json(200, toApi(row)) : json(404, { error: "Product not found" });
 });
 
 export const remove = wrap(async (event) => {
-    const { rowCount } = await query(`DELETE FROM products WHERE id = $1`, [productId(event)]);
-    return rowCount ? json(204) : json(404, { error: "Product not found" });
+    const id = productId(event);
+    const deleted = await withDb(db =>
+        db.delete(products).where(eq(products.id, id)).returning({ id: products.id }));
+    return deleted.length ? json(204) : json(404, { error: "Product not found" });
 });
