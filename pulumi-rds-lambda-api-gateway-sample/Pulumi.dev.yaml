@@ -1,0 +1,8 @@
+config:
+  aws:region: us-east-1
+  aws:defaultTags:
+    tags:
+      project: products-crud
+      managed-by: pulumi
+  # Production keeps the safe defaults (deletion protection ON, final snapshot).
+  products-crud:deletionProtection: "false"

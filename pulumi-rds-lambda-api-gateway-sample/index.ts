@@ -1,8 +1,38 @@
 import * as pulumi from "@pulumi/pulumi";
-import * as aws from "@pulumi/aws";
+import { Network } from "./components/network";
+import { Database } from "./components/database";
+import { ProductsApi } from "./components/products-api";
 
-// Create an AWS resource (S3 Bucket)
-const bucket = new aws.s3.Bucket("my-bucket");
+const config = new pulumi.Config();
+const dbInstanceClass = config.get("dbInstanceClass") ?? "db.t4g.micro";
+const dbAllocatedStorageGb = config.getNumber("dbAllocatedStorageGb") ?? 20;
+const dbMultiAz = config.getBoolean("dbMultiAz") ?? false;
+// Safe by default: prod keeps protection + final snapshot; dev stack turns it off.
+const deletionProtection = config.getBoolean("deletionProtection") ?? true;
+const logRetentionDays = config.getNumber("logRetentionDays") ?? 14;
 
-// Export the name of the bucket
-export const bucketName = bucket.id;
+const network = new Network("net");
+
+const database = new Database("db", {
+    subnetIds: network.privateSubnetIds,
+    securityGroupId: network.dbSecurityGroupId,
+    instanceClass: dbInstanceClass,
+    allocatedStorageGb: dbAllocatedStorageGb,
+    multiAz: dbMultiAz,
+    deletionProtection,
+    dbName: "products",
+});
+
+const api = new ProductsApi("products", {
+    subnetIds: network.privateSubnetIds,
+    lambdaSecurityGroupId: network.lambdaSecurityGroupId,
+    dbHost: database.address,
+    dbPort: database.port,
+    dbName: database.dbName,
+    dbSecretArn: database.secretArn,
+    logRetentionDays,
+});
+
+export const apiUrl = api.url;
+export const dbEndpoint = database.address;
+export const dbSecretArn = database.secretArn;

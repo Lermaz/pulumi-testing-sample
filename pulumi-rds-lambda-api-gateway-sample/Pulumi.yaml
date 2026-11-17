@@ -1,5 +1,5 @@
 name: pulumi-rds-lambda-api-gateway-sample
-description: A minimal AWS TypeScript Pulumi program
+description: Products CRUD API (API Gateway HTTP API + Lambda + RDS PostgreSQL)
 runtime:
   name: nodejs
   options:
