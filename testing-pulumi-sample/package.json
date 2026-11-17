@@ -1,0 +1,17 @@
+{
+    "name": "testing-pulumi-sample",
+    "main": "index.ts",
+    "scripts": {
+        "test": "mocha --require tsx ec2tests.ts"
+    },
+    "devDependencies": {
+        "@types/mocha": "^10.0.10",
+        "@types/node": "^18",
+        "tsx": "^4.23.15",
+        "typescript": "^5.0.0"
+    },
+    "dependencies": {
+        "@pulumi/aws": "^7.0.0",
+        "@pulumi/pulumi": "^3.113.0"
+    }
+}
